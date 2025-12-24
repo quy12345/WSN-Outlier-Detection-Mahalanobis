@@ -2,10 +2,9 @@
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-
 A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Mahalanobis Distance)** for Wireless Sensor Networks, as described in the research paper. This simulation demonstrates the superiority of ODA-MD over traditional outlier detection methods in terms of detection accuracy and energy efficiency.
 
-##  Performance Results
+## Performance Results
 
 | Algorithm | Detection Accuracy | False Alarm Rate | Energy Consumption |
 |-----------|-------------------|-----------------|---------------------|
@@ -14,7 +13,7 @@ A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Ma
 
 *Results from simulation with 81 nodes, 10 clusters, 1000 injected outliers using Intel Lab dataset.*
 
-##  Key Features
+## Key Features
 
 - **Mahalanobis Distance-based Detection**: Exploits spatial correlation between sensor data for robust outlier detection
 - **Distributed Processing**: Cluster Heads (CHs) perform local detection, reducing communication overhead
@@ -22,9 +21,9 @@ A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Ma
 - **Real Dataset Integration**: Uses actual Intel Lab sensor data for realistic evaluation
 - **Full Network Simulation**: 81 nodes, 10 clusters, 100×100m deployment area
 
-##  Architecture
+## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                         SINK (Node 1)                        │
 └─────────────────────────────────────────────────────────────┘
@@ -37,16 +36,16 @@ A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Ma
               │               │               │
      ┌────┬───┴───┬────┐  ┌───┴───┐     ┌────┼────┐
      │    │       │    │  │       │     │    │    │
-   [N30][N31]  [N51][N66][N36][N37][N38][N27][N28][N58]
-                      (Intel Lab Data)
+    [N30][N31]  [N51][N66][N36][N37][N38][N27][N28][N58]
+                       (Intel Lab Data)
 ```
 
-##  Project Structure
+## Project Structure
 
-```
+```text
 mahalanobis/
 ├── main.py                 # Entry point for simulation
-├── data.txt                # Intel Lab sensor dataset
+├── data.txt                # Intel Lab sensor dataset (Needs manual download)
 ├── modules/
 │   ├── __init__.py
 │   ├── config.py           # Configuration constants
@@ -62,13 +61,15 @@ mahalanobis/
     └── temperature_with_outliers.png
 ```
 
-##  Installation
+## Installation
 
 ### Prerequisites
+
 - Python 3.8+
 - pip
 
 ### Setup
+
 ```bash
 # Clone the repository
 git clone https://github.com/yourusername/oda-md-wsn.git
@@ -78,20 +79,38 @@ cd oda-md-wsn
 pip install numpy pandas matplotlib scipy
 ```
 
-##  Usage
+##  Dataset Setup
+
+The Intel Lab dataset (`data.txt`) is not included in this repository due to its large size (~150MB). You must download it manually to run the simulation:
+
+1. **Download**: Get the dataset from the official MIT link or Kaggle:
+   - [Official MIT Link (data.txt.gz)](http://db.csail.mit.edu/labdata/data.txt.gz)
+   - [Kaggle Dataset (Intel Berkeley Research Lab)](https://www.kaggle.com/datasets/prakharrathi25/intel-berkeley-research-lab-sensor-data)
+2. **Extract**: If you downloaded the `.gz` file, extract it to get `data.txt`.
+3. **Placement**: Place the `data.txt` file directly in the root directory of the project:
+   ```text
+   mahalanobis/
+   ├── main.py
+   ├── data.txt  <-- Place it here
+   └── modules/
+   ```
+
+## Usage
 
 ### Run Full Simulation
+
 ```bash
 python main.py
 ```
 
 ### Output Files
+
 - `network_topology.png` - Visual representation of the 81-node network
 - `wsn_comparison_results.png` - DA and FAR comparison over time (Figures 4 & 5)
 - `wsn_energy_comparison.png` - Energy consumption comparison (Figure 6)
 - `temperature_with_outliers.png` - Temperature data with injected outliers
 
-##  Algorithm Overview
+## Algorithm Overview
 
 ### ODA-MD (Proposed)
 
@@ -99,7 +118,7 @@ python main.py
 2. **Matrix Construction**: Build matrix X from received sensor vectors
 3. **Statistics Calculation**: Compute mean (μ) and covariance (Σ)
 4. **Mahalanobis Distance**: Calculate MD for each observation:
-   ```
+   ```text
    MD_i = √[(X_i - μ)ᵀ Σ⁻¹ (X_i - μ)]
    ```
 5. **Anomaly Decision**: Flag as outlier if MD² > χ²(p, 0.975)
@@ -111,7 +130,7 @@ python main.py
 2. **kNN-based Detection**: Flag points in sparse clusters as outliers
 3. **Forward All Data**: Transmit all data regardless of outlier status
 
-##  Simulation Parameters
+## Simulation Parameters
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
@@ -122,20 +141,19 @@ python main.py
 | RADIO_RANGE | 30m | Communication range |
 | OUTLIERS | 1000 | Injected anomalies |
 
-##  Dataset
+## Dataset
 
 This project uses the **Intel Lab Dataset** [1]:
+
 - 54 sensors deployed in Intel Berkeley Research Lab
 - Measurements: temperature, humidity, light, voltage
-- Duration: February 28 - April 5, 2004
+- **Source**: [Download data.txt](http://db.csail.mit.edu/labdata/data.txt.gz)
 - Selected nodes: {36, 37, 38} for Cluster 2
 - Time period: March 11-14, 2004 (~15,763 records)
 
+## References
 
-
-##  References
-
-1. **Intel Lab Data**: Madden, S. (2004). Intel Lab Data. Retrieved from http://db.csail.mit.edu/labdata/labdata.html
+1. **Intel Lab Data**: Madden, S. (2004). Intel Lab Data. Retrieved from [http://db.csail.mit.edu/labdata/labdata.html](http://db.csail.mit.edu/labdata/labdata.html)
 
 2. **Mahalanobis Distance**: Mahalanobis, P. C. (1936). On the generalized distance in statistics. *Proceedings of the National Institute of Sciences of India*, 2(1), 49-55.
 
@@ -145,15 +163,15 @@ This project uses the **Intel Lab Dataset** [1]:
 
 Based on the first-order radio model:
 
-```
+```text
 E_tx = E_elec × k + E_amp × k × d²
 E_rx = E_elec × k
 E_da = 5 nJ/bit (data aggregation)
 ```
 
 Where:
+
 - E_elec = 50 nJ/bit (electronics energy)
 - E_amp = 100 pJ/bit/m² (amplifier energy)
 - k = packet size in bits
 - d = transmission distance
-
