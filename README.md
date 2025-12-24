@@ -1,6 +1,5 @@
 # ODA-MD: Outlier Detection Algorithm using Mahalanobis Distance for Wireless Sensor Networks
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
 A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Mahalanobis Distance)** for Wireless Sensor Networks, as described in the research paper. This simulation demonstrates the superiority of ODA-MD over traditional outlier detection methods in terms of detection accuracy and energy efficiency.
 
@@ -84,8 +83,8 @@ pip install numpy pandas matplotlib scipy
 The Intel Lab dataset (`data.txt`) is not included in this repository due to its large size (~150MB). You must download it manually to run the simulation:
 
 1. **Download**: Get the dataset from the official MIT link or Kaggle:
-   - [Official MIT Link (data.txt.gz)](http://db.csail.mit.edu/labdata/data.txt.gz)
-   - [Kaggle Dataset (Intel Berkeley Research Lab)](https://www.kaggle.com/datasets/prakharrathi25/intel-berkeley-research-lab-sensor-data)
+   - [Official MIT Link (data.txt.gz)](https://db.csail.mit.edu/labdata/data.txt.gz)
+   - [Kaggle Dataset (Intel Berkeley Research Lab)](https://www.kaggle.com/datasets/divyansh22/intel-berkeley-research-lab-sensor-data)
 2. **Extract**: If you downloaded the `.gz` file, extract it to get `data.txt`.
 3. **Placement**: Place the `data.txt` file directly in the root directory of the project:
    ```text
@@ -159,7 +158,7 @@ This project uses the **Intel Lab Dataset** [1]:
 
 *Crossbow Technology*.
 
-## 🛠️ Energy Model
+##  Energy Model
 
 Based on the first-order radio model:
 
