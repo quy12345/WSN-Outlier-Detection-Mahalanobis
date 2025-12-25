@@ -1,18 +1,20 @@
 """
 Data Loading and Preprocessing Module.
+Loads all 4 sensor attributes: temperature, humidity, light, voltage.
 """
 
 import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict
-from .config import CLUSTER_2_NODES
+from .config import CLUSTER_2_NODES, SENSOR_ATTRIBUTES, N_ATTRIBUTES
+
 
 def load_intel_data(filepath: str = 'data.txt', 
                     node_ids: List[int] = CLUSTER_2_NODES,
                     date_start: str = '2004-03-11',
                     date_end: str = '2004-03-15') -> pd.DataFrame:
     """
-    Load Intel Lab data for specified nodes.
+    Load Intel Lab data for specified nodes with ALL 4 sensor attributes.
     
     Parameters:
     -----------
@@ -25,10 +27,11 @@ def load_intel_data(filepath: str = 'data.txt',
     
     Returns:
     --------
-    pd.DataFrame : Pivoted data (epoch x nodes)
+    pd.DataFrame : Data with columns for each node and each attribute
+        Schema: epoch, node_36_temperature, node_36_humidity, node_36_light, node_36_voltage, ...
     """
     print("=" * 60)
-    print("LOADING INTEL LAB DATA")
+    print("LOADING INTEL LAB DATA (4 ATTRIBUTES)")
     print("=" * 60)
     
     columns = ['date', 'time', 'epoch', 'moteid', 'temperature', 
@@ -38,16 +41,19 @@ def load_intel_data(filepath: str = 'data.txt',
     df = pd.read_csv(filepath, sep=r'\s+', header=None, names=columns)
     print(f"Total records: {len(df):,}")
     
-    # Clean data
-    df = df.dropna(subset=['moteid', 'temperature'])
+    # Clean data - drop rows with any missing sensor values
+    df = df.dropna(subset=['moteid', 'temperature', 'humidity', 'light', 'voltage'])
     df['moteid'] = df['moteid'].astype(int)
     
     # Filter nodes
     df = df[df['moteid'].isin(node_ids)]
     print(f"Records for nodes {node_ids}: {len(df):,}")
     
-    # Filter valid temperatures
+    # Filter valid sensor readings
     df = df[(df['temperature'] > -40) & (df['temperature'] < 100)]
+    df = df[(df['humidity'] >= 0) & (df['humidity'] <= 100)]
+    df = df[(df['light'] >= 0)]
+    df = df[(df['voltage'] > 0) & (df['voltage'] < 5)]
     
     # Create datetime
     df['datetime'] = pd.to_datetime(df['date'] + ' ' + df['time'], errors='coerce')
@@ -56,56 +62,123 @@ def load_intel_data(filepath: str = 'data.txt',
     df = df[(df['datetime'] >= date_start) & (df['datetime'] < date_end)]
     print(f"Records after date filter ({date_start} to {date_end}): {len(df):,}")
     
-    # Pivot: rows = epoch, columns = node
-    df_pivot = df.pivot_table(
-        index='epoch',
-        columns='moteid',
-        values='temperature',
-        aggfunc='mean'
-    )
+    # Pivot for each attribute separately, then merge
+    result_df = None
     
-    # Rename columns
-    df_pivot.columns = [f'node_{col}' for col in df_pivot.columns]
+    for attr in SENSOR_ATTRIBUTES:
+        df_pivot = df.pivot_table(
+            index='epoch',
+            columns='moteid',
+            values=attr,
+            aggfunc='mean'
+        )
+        
+        # Rename columns to include attribute name
+        df_pivot.columns = [f'node_{col}_{attr}' for col in df_pivot.columns]
+        
+        if result_df is None:
+            result_df = df_pivot
+        else:
+            result_df = result_df.join(df_pivot, how='outer')
     
-    # Interpolate missing values instead of dropping
-    # This preserves the timeline (15k+ rows as per paper)
-    df_pivot = df_pivot.interpolate(method='linear', limit_direction='both')
+    # Interpolate missing values
+    result_df = result_df.interpolate(method='linear', limit_direction='both')
     
-    # Drop only remaining NaNs (if any at start/end)
-    df_pivot = df_pivot.dropna()
-    print(f"Epochs with valid data: {len(df_pivot):,}")
+    # Drop remaining NaNs
+    result_df = result_df.dropna()
+    print(f"Epochs with valid data: {len(result_df):,}")
     
-    df_pivot = df_pivot.reset_index()
+    # Print statistics for each attribute
+    print(f"\nData statistics per attribute:")
+    for attr in SENSOR_ATTRIBUTES:
+        attr_cols = [c for c in result_df.columns if attr in c]
+        if attr_cols:
+            mean_val = result_df[attr_cols].mean().mean()
+            std_val = result_df[attr_cols].std().mean()
+            print(f"  {attr}: mean={mean_val:.2f}, std={std_val:.2f}")
     
-    return df_pivot
+    result_df = result_df.reset_index()
+    
+    return result_df
 
 
-def inject_outliers(df: pd.DataFrame, n_outliers: int = 1000, 
-                   node_columns: List[str] = None) -> Tuple[pd.DataFrame, np.ndarray, list]:
+def get_node_observation(df: pd.DataFrame, node_id: int, epoch_idx: int) -> np.ndarray:
     """
-    Inject synthetic outliers into real data.
+    Get 4-attribute observation vector for a specific node at a specific epoch.
+    
+    Returns:
+    --------
+    np.ndarray: [temperature, humidity, light, voltage]
+    """
+    obs = []
+    for attr in SENSOR_ATTRIBUTES:
+        col_name = f'node_{node_id}_{attr}'
+        if col_name in df.columns:
+            obs.append(df.iloc[epoch_idx][col_name])
+        else:
+            obs.append(0.0)  # Fallback
+    return np.array(obs)
+
+
+def get_node_data_matrix(df: pd.DataFrame, node_id: int) -> np.ndarray:
+    """
+    Get all observations for a node as a matrix (n_epochs, 4).
+    
+    Returns:
+    --------
+    np.ndarray: Shape (n_epochs, 4) - each row is [temp, humid, light, volt]
+    """
+    data = []
+    for attr in SENSOR_ATTRIBUTES:
+        col_name = f'node_{node_id}_{attr}'
+        if col_name in df.columns:
+            data.append(df[col_name].values)
+        else:
+            data.append(np.zeros(len(df)))
+    
+    # Stack and transpose to get (n_epochs, 4)
+    return np.column_stack(data)
+
+
+def inject_outliers(df: pd.DataFrame, node_ids: List[int], 
+                   n_outliers: int = 1000) -> Tuple[pd.DataFrame, np.ndarray, list]:
+    """
+    Inject synthetic outliers into real data by modifying one of the 4 attributes.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        Data with 4 attributes per node
+    node_ids : List[int]
+        List of node IDs in this cluster
+    n_outliers : int
+        Number of outliers to inject
     
     Returns:
     --------
     tuple: (modified_df, ground_truth, outlier_schedule)
     """
     print("\n" + "=" * 60)
-    print(f"INJECTING {n_outliers} OUTLIERS")
+    print(f"INJECTING {n_outliers} OUTLIERS (4-ATTRIBUTE)")
     print("=" * 60)
-    
-    if node_columns is None:
-        node_columns = ['node_36', 'node_37', 'node_38']
     
     df_modified = df.copy()
     n_samples = len(df)
     
-    # Calculate statistics from original clean data
-    means = df[node_columns].mean()
-    stds = df[node_columns].std()
+    # Get all attribute columns for these nodes
+    all_columns = []
+    for node_id in node_ids:
+        for attr in SENSOR_ATTRIBUTES:
+            col_name = f'node_{node_id}_{attr}'
+            if col_name in df.columns:
+                all_columns.append(col_name)
     
-    print(f"Original data statistics:")
-    for col in node_columns:
-        print(f"  {col}: mean={means[col]:.2f}, std={stds[col]:.2f}")
+    if not all_columns:
+        print("No valid columns found for outlier injection!")
+        return df_modified, np.zeros(n_samples, dtype=int), []
+    
+    # Calculate statistics
+    stds = df_modified[all_columns].std()
     
     # Ground truth labels
     ground_truth = np.zeros(n_samples, dtype=int)
@@ -119,33 +192,34 @@ def inject_outliers(df: pd.DataFrame, n_outliers: int = 1000,
         if idx < n_samples:
             ground_truth[idx] = 1
             
-            # Modify one random node with VARYING deviation
-            # Some outliers are easier (>5 sigma), some harder (3-5 sigma)
-            col = np.random.choice(node_columns)
+            # Choose random column (node + attribute combination)
+            col = np.random.choice(all_columns)
             original = df_modified.iloc[idx][col]
             direction = np.random.choice([-1, 1])
             
-            # Hypothesis check: Paper likely used gross errors (obvious outliers)
-            # which allow 100% detection even with naive covariance.
-            # Set deviation to be consistently large (> 5 sigma)
+            # Large deviation (5-10 sigma) for clear outliers
             deviation = 5 * stds[col] + np.random.uniform(0, 5 * stds[col])
             
             df_modified.iloc[idx, df_modified.columns.get_loc(col)] = original + direction * deviation
             
-            outlier_schedule.append({'epoch_idx': idx, 'time': i * 2})  # time in seconds
+            outlier_schedule.append({
+                'epoch_idx': idx, 
+                'column': col,
+                'time': i * 2
+            })
     
-    print(f"\nInjected {np.sum(ground_truth)} outliers")
+    print(f"\nInjected {np.sum(ground_truth)} outliers across {len(all_columns)} attribute columns")
     print(f"Ground truth: Normal={np.sum(ground_truth == 0)}, Outlier={np.sum(ground_truth == 1)}")
     
     return df_modified, ground_truth, outlier_schedule
 
 
 def generate_network_data(topology, real_data: pd.DataFrame, 
-                          n_outliers: int = 1000) -> Tuple[Dict, np.ndarray, list]:
+                          n_outliers: int = 1000) -> Tuple[Dict, Dict, list]:
     """
-    Generate data for entire 81-node network.
+    Generate 4-attribute data for entire 81-node network.
     
-    - Cluster 2 (nodes 36, 37, 38) uses real Intel Lab data
+    - Cluster 2 (nodes 36, 37, 38) uses real Intel Lab data (4 attributes)
     - Other nodes use synthetic data correlated with real data patterns
     
     Parameters:
@@ -153,29 +227,34 @@ def generate_network_data(topology, real_data: pd.DataFrame,
     topology : NetworkTopology
         The network topology object
     real_data : pd.DataFrame
-        Real data from Intel Lab (nodes 36, 37, 38)
+        Real data from Intel Lab with 4 attributes per node
     n_outliers : int
         Number of outliers to inject across network
         
     Returns:
     --------
-    tuple: (data_dict, ground_truth, outlier_schedule)
-        - data_dict[cluster_id] = DataFrame with columns for each node
-        - ground_truth[cluster_id] = array of labels
+    tuple: (data_dict, ground_truth_dict, outlier_schedule)
+        - data_dict[cluster_id] = DataFrame with 4 attributes per node
+        - ground_truth_dict[cluster_id] = array of labels (per epoch)
         - outlier_schedule = list of outlier events
     """
     print("\n" + "=" * 60)
-    print("GENERATING NETWORK-WIDE DATA")
+    print("GENERATING NETWORK-WIDE DATA (4 ATTRIBUTES)")
     print("=" * 60)
     
     n_samples = len(real_data)
     
-    # Get statistics from real data
-    real_cols = ['node_36', 'node_37', 'node_38']
-    base_mean = real_data[real_cols].mean().mean()
-    base_std = real_data[real_cols].std().mean()
+    # Get statistics from real data for each attribute
+    stats = {}
+    for attr in SENSOR_ATTRIBUTES:
+        attr_cols = [c for c in real_data.columns if attr in c]
+        if attr_cols:
+            stats[attr] = {
+                'mean': real_data[attr_cols].mean().mean(),
+                'std': real_data[attr_cols].std().mean()
+            }
+            print(f"  {attr}: mean={stats[attr]['mean']:.2f}, std={stats[attr]['std']:.2f}")
     
-    print(f"Base pattern: mean={base_mean:.2f}, std={base_std:.2f}")
     print(f"Samples per node: {n_samples}")
     
     # Data storage per cluster
@@ -195,52 +274,76 @@ def generate_network_data(topology, real_data: pd.DataFrame,
         
         # Generate data for each member
         for node_id in cluster_info.member_ids:
-            col_name = f'node_{node_id}'
-            
-            if node_id in [36, 37, 38] and cluster_id == 2:
-                # Use real data for Cluster 2 special nodes
-                if col_name in real_data.columns:
-                    cluster_data[col_name] = real_data[col_name].values
-                    print(f"    -> Using REAL Intel Lab data for {col_name}")
+            for attr in SENSOR_ATTRIBUTES:
+                col_name = f'node_{node_id}_{attr}'
+                real_col = f'node_{node_id}_{attr}'
+                
+                if node_id in [36, 37, 38] and cluster_id == 2:
+                    # Use real data for Cluster 2 special nodes
+                    if real_col in real_data.columns:
+                        cluster_data[col_name] = real_data[real_col].values
+                    else:
+                        # Fallback: use node 36's data
+                        fallback_col = f'node_36_{attr}'
+                        if fallback_col in real_data.columns:
+                            cluster_data[col_name] = real_data[fallback_col].values
+                        else:
+                            cluster_data[col_name] = np.zeros(n_samples)
                 else:
-                    # Fallback: use first real column
-                    cluster_data[col_name] = real_data[real_cols[0]].values
-                    print(f"    -> Using fallback real data for {col_name}")
-            else:
-                # Generate synthetic data based on real patterns
-                # Add cluster-specific offset and node-specific noise
-                cluster_offset = (cluster_id - 5) * 0.5  # Vary by cluster
-                node_noise = np.random.normal(0, base_std * 0.3, n_samples)
-                
-                # Use real data pattern as base (from node 36)
-                base_pattern = real_data[real_cols[0]].values
-                
-                # Add temporal correlation (smoothing)
-                synthetic = base_pattern + cluster_offset + node_noise
-                
-                # Add some daily pattern variation
-                daily_cycle = np.sin(np.linspace(0, 8 * np.pi, n_samples)) * base_std * 0.2
-                synthetic += daily_cycle
-                
-                cluster_data[col_name] = synthetic
+                    # Generate synthetic data based on real patterns
+                    if attr in stats:
+                        base_mean = stats[attr]['mean']
+                        base_std = stats[attr]['std']
+                    else:
+                        base_mean = 20.0
+                        base_std = 2.0
+                    
+                    # Cluster-specific offset
+                    cluster_offset = (cluster_id - 5) * (base_std * 0.3)
+                    
+                    # Node-specific noise
+                    node_noise = np.random.normal(0, base_std * 0.3, n_samples)
+                    
+                    # Get base pattern from real data if available
+                    real_pattern_col = f'node_36_{attr}'
+                    if real_pattern_col in real_data.columns:
+                        base_pattern = real_data[real_pattern_col].values
+                    else:
+                        base_pattern = np.ones(n_samples) * base_mean
+                    
+                    # Combine
+                    synthetic = base_pattern + cluster_offset + node_noise
+                    
+                    # Add daily cycle variation
+                    daily_cycle = np.sin(np.linspace(0, 8 * np.pi, n_samples)) * base_std * 0.2
+                    synthetic += daily_cycle
+                    
+                    cluster_data[col_name] = synthetic
         
         data_dict[cluster_id] = cluster_data
         
         # Initialize ground truth for this cluster
         ground_truth_dict[cluster_id] = np.zeros(n_samples, dtype=int)
         
+        # Get all attribute columns for this cluster's nodes
+        all_columns = []
+        for node_id in cluster_info.member_ids:
+            for attr in SENSOR_ATTRIBUTES:
+                col_name = f'node_{node_id}_{attr}'
+                if col_name in cluster_data.columns:
+                    all_columns.append(col_name)
+        
         # Inject outliers for this cluster
-        node_columns = [f'node_{nid}' for nid in cluster_info.member_ids]
-        if node_columns:
-            stds = cluster_data[node_columns].std()
+        if all_columns:
+            stds = cluster_data[all_columns].std()
             
             for i in range(outliers_per_cluster):
                 idx = int((i / outliers_per_cluster) * n_samples)
                 if idx < n_samples:
                     ground_truth_dict[cluster_id][idx] = 1
                     
-                    # Modify random node
-                    col = np.random.choice(node_columns)
+                    # Modify random attribute column
+                    col = np.random.choice(all_columns)
                     original = cluster_data.iloc[idx][col]
                     direction = np.random.choice([-1, 1])
                     deviation = 5 * stds[col] + np.random.uniform(0, 5 * stds[col])
@@ -250,7 +353,7 @@ def generate_network_data(topology, real_data: pd.DataFrame,
                     outlier_schedule.append({
                         'cluster_id': cluster_id,
                         'epoch_idx': idx,
-                        'node': col
+                        'column': col
                     })
     
     total_outliers = sum(np.sum(gt) for gt in ground_truth_dict.values())

@@ -14,6 +14,12 @@ E_ELEC = 50e-9  # 50 nJ/bit
 E_AMP = 100e-12  # 100 pJ/bit/m^2
 E_DA = 5e-9  # 5 nJ/bit
 
+# Sensor Attributes (as per paper Section I - Contribution)
+# "We chose four types of data (Temperature, light, voltage, and humidity)"
+SENSOR_ATTRIBUTES = ['temperature', 'humidity', 'light', 'voltage']
+N_ATTRIBUTES = 4
+
+
 # Cluster 2 nodes as per paper
 # Paper Setup: 81 Nodes in 100x100m, 10 Clusters.
 # Sink ID = 1.

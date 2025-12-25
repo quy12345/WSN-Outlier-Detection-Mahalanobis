@@ -1,6 +1,5 @@
 # ODA-MD: Outlier Detection Algorithm using Mahalanobis Distance for Wireless Sensor Networks
 
-
 A Python implementation of the **ODA-MD (Outlier Detection Algorithm based on Mahalanobis Distance)** for Wireless Sensor Networks, as described in the research paper. This simulation demonstrates the superiority of ODA-MD over traditional outlier detection methods in terms of detection accuracy and energy efficiency.
 
 ## Performance Results
@@ -78,7 +77,7 @@ cd oda-md-wsn
 pip install numpy pandas matplotlib scipy
 ```
 
-##  Dataset Setup
+## Dataset Setup
 
 The Intel Lab dataset (`data.txt`) is not included in this repository due to its large size (~150MB). You must download it manually to run the simulation:
 
@@ -87,12 +86,13 @@ The Intel Lab dataset (`data.txt`) is not included in this repository due to its
    - [Kaggle Dataset (Intel Berkeley Research Lab)](https://www.kaggle.com/datasets/divyansh22/intel-berkeley-research-lab-sensor-data)
 2. **Extract**: If you downloaded the `.gz` file, extract it to get `data.txt`.
 3. **Placement**: Place the `data.txt` file directly in the root directory of the project:
-   ```text
+ 
+```text
    mahalanobis/
    ├── main.py
    ├── data.txt  <-- Place it here
    └── modules/
-   ```
+ ```
 
 ## Usage
 
@@ -117,9 +117,11 @@ python main.py
 2. **Matrix Construction**: Build matrix X from received sensor vectors
 3. **Statistics Calculation**: Compute mean (μ) and covariance (Σ)
 4. **Mahalanobis Distance**: Calculate MD for each observation:
-   ```text
+
+```text
    MD_i = √[(X_i - μ)ᵀ Σ⁻¹ (X_i - μ)]
    ```
+
 5. **Anomaly Decision**: Flag as outlier if MD² > χ²(p, 0.975)
 6. **Selective Forwarding**: Only transmit normal data to sink
 
@@ -158,7 +160,7 @@ This project uses the **Intel Lab Dataset** [1]:
 
 *Crossbow Technology*.
 
-##  Energy Model
+## Energy Model
 
 Based on the first-order radio model:
 
