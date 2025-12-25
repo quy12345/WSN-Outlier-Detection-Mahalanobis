@@ -86,7 +86,8 @@ class ClusterHead:
     """
     
     def __init__(self, cluster_id: int = CH_ID, node_ids: List[int] = CLUSTER_2_NODES, 
-                 member_nodes: List[SensorNode] = None, window_size: int = 50):
+                 member_nodes: List[SensorNode] = None, window_size: int = 50,
+                 verbose: bool = False, sample_log_interval: int = 500):
         self.cluster_id = cluster_id
         self.node_ids = node_ids
         self.members = member_nodes if member_nodes else []
@@ -99,10 +100,73 @@ class ClusterHead:
         self.energy = INITIAL_ENERGY
         self.consumed_energy = 0.0
         self.detected_count = 0
+        
+        # Logging settings
+        self.verbose = verbose
+        self.sample_log_interval = sample_log_interval
+        self._epoch_count = 0
+        self._sample_logs_printed = 0  # Track how many sample logs printed
+        self._outlier_logs_printed = 0  # Track how many outlier logs printed
+        self._max_sample_logs = 3  # Max sample queries to print
+        self._max_outlier_logs = 2  # Max outlier queries to print
 
     def consume_energy(self, amount: float):
         self.energy -= amount
         self.consumed_energy += amount
+
+    def _log_query(self, epoch_idx: int, table_md: np.ndarray, 
+                   md_values: dict = None, threshold: float = None, 
+                   outlier_nodes: list = None):
+        """Log a CH query with detailed information."""
+        if not self.verbose:
+            return
+        
+        is_outlier = outlier_nodes and len(outlier_nodes) > 0
+        
+        # Only log: first few samples (after warm-up) + first few outliers
+        should_log = False
+        log_type = ""
+        
+        if is_outlier and self._outlier_logs_printed < self._max_outlier_logs:
+            should_log = True
+            log_type = "OUTLIER"
+            self._outlier_logs_printed += 1
+        elif not is_outlier and self._epoch_count >= 10 and self._sample_logs_printed < self._max_sample_logs:
+            should_log = True
+            log_type = "SAMPLE"
+            self._sample_logs_printed += 1
+        
+        if not should_log:
+            return
+        
+        print("\n" + "-" * 65)
+        if log_type == "OUTLIER":
+            print(f"| [!] CH QUERY #{self._epoch_count} - Cluster {self.cluster_id}, t={epoch_idx} [OUTLIER]")
+        else:
+            print(f"| [*] CH QUERY #{self._epoch_count} - Cluster {self.cluster_id}, t={epoch_idx} [NORMAL]")
+        print("-" * 65)
+        
+        # Table MD header
+        print(f"| Table_MD ({len(self.members)} nodes x 4 attributes):")
+        print(f"| {'Node':<6} {'Temp':>10} {'Humid':>10} {'Light':>10} {'Volt':>10}")
+        print("|" + "-" * 55)
+        
+        for idx, member in enumerate(self.members):
+            node_id = member.node_id
+            obs = table_md[idx]
+            md_str = ""
+            if md_values and node_id in md_values:
+                md_str = f" -> MD={md_values[node_id]:.3f}"
+            print(f"| N_{node_id:<3} {obs[0]:>10.2f} {obs[1]:>10.2f} {obs[2]:>10.1f} {obs[3]:>10.4f}{md_str}")
+        
+        if threshold is not None:
+            print(f"| Threshold (chi2, df=4): {threshold:.4f}")
+        
+        if outlier_nodes:
+            print(f"| >>> DECISION: OUTLIER - Node(s) {outlier_nodes}")
+        else:
+            print(f"| >>> DECISION: NORMAL - All nodes within threshold")
+        print("-" * 65)
 
     def process_time_step(self, epoch_idx: int) -> Tuple[bool, Dict]:
         """
@@ -122,6 +186,7 @@ class ClusterHead:
         --------
         (is_outlier, details) - whether this time step has outlier
         """
+        self._epoch_count += 1
         n_nodes = len(self.members)
         if n_nodes == 0:
             return False, {}
@@ -144,14 +209,14 @@ class ClusterHead:
         total_bits_rx = n_nodes * N_ATTRIBUTES * PACKET_SIZE * 8
         self.consume_energy(E_ELEC * total_bits_rx)
         
-        # Add to history for statistics
+        # Add to history for statistics (keep ALL history, not rolling window)
         self.history.append(table_md)
-        if len(self.history) > self.window_size:
-            self.history.pop(0)
         
         # ===== ALGORITHM 2: MD Calculation & Detection =====
         is_outlier = False
         outlier_nodes = []
+        md_values = {}  # Store MD for each node (for logging)
+        threshold = None
         
         # Need at least a few samples for meaningful statistics
         if len(self.history) >= 5:
@@ -191,10 +256,16 @@ class ClusterHead:
                 md_sq = np.dot(np.dot(diff, cov_inv), diff)
                 md = np.sqrt(max(0, md_sq))
                 
+                # Store MD for logging
+                md_values[self.members[node_idx].node_id] = md
+                
                 # Decision (Eq. 5)
                 if md >= threshold:
                     is_outlier = True
                     outlier_nodes.append(self.members[node_idx].node_id)
+        
+        # Log query details
+        self._log_query(epoch_idx, table_md, md_values, threshold, outlier_nodes)
         
         if is_outlier:
             self.detected_count += 1
@@ -208,7 +279,12 @@ class ClusterHead:
         # Processing energy
         self.consume_energy(E_DA * PACKET_SIZE * 8 * n_nodes)
         
-        return is_outlier, {'outlier_nodes': outlier_nodes, 'table_md_shape': table_md.shape}
+        return is_outlier, {
+            'outlier_nodes': outlier_nodes, 
+            'table_md_shape': table_md.shape,
+            'md_values': md_values,
+            'threshold': threshold
+        }
 
 
 # =============================================================================
@@ -222,7 +298,8 @@ class OD_Detector:
     """
     
     def __init__(self, n_nodes: int, width: float = 5.0, k: int = 5, 
-                 max_clusters: int = 100, threshold_refresh: int = 100):
+                 max_clusters: int = 100, threshold_refresh: int = 100,
+                 verbose: bool = False):
         self.n_nodes = n_nodes
         self.width = width
         self.k = k
@@ -245,9 +322,59 @@ class OD_Detector:
         # Energy Params
         self.dist_nodes_to_ch = [np.random.uniform(5, RADIO_RANGE) for _ in range(n_nodes)]
         self.dist_ch_to_sink = 50.0
+        
+        # Verbose settings
+        self.verbose = verbose
+        self._sample_logs_printed = 0
+        self._outlier_logs_printed = 0
+        self._max_sample_logs = 2
+        self._max_outlier_logs = 2
     
     def consume_energy(self, amount):
         self.consumed_energy += amount
+    
+    def _log_query(self, observations: np.ndarray, assigned_cluster: int,
+                   min_dist: float, my_score: float, threshold: float, 
+                   is_outlier: bool, n_clusters: int):
+        """Log OD algorithm query with detailed information."""
+        if not self.verbose:
+            return
+        
+        # Only log first few samples + outliers
+        should_log = False
+        log_type = ""
+        
+        if is_outlier and self._outlier_logs_printed < self._max_outlier_logs:
+            should_log = True
+            log_type = "OUTLIER"
+            self._outlier_logs_printed += 1
+        elif not is_outlier and self.call_count >= 10 and self._sample_logs_printed < self._max_sample_logs:
+            should_log = True
+            log_type = "SAMPLE"
+            self._sample_logs_printed += 1
+        
+        if not should_log:
+            return
+        
+        print("\n" + "-" * 65)
+        if log_type == "OUTLIER":
+            print(f"| [!] OD QUERY #{self.call_count} [OUTLIER DETECTED]")
+        else:
+            print(f"| [*] OD QUERY #{self.call_count} [NORMAL]")
+        print("-" * 65)
+        
+        # Show clustering info
+        print(f"| Current clusters: {n_clusters} (max: {self.max_clusters})")
+        print(f"| Assigned to cluster: #{assigned_cluster}")
+        print(f"| Distance to nearest cluster: {min_dist:.4f} (width: {self.width})")
+        print(f"| k-NN score: {my_score:.4f}")
+        print(f"| Threshold (mean+std): {threshold:.4f}" if threshold else "| Threshold: Not yet computed")
+        
+        if is_outlier:
+            print(f"| >>> DECISION: OUTLIER (score {my_score:.4f} > threshold {threshold:.4f})")
+        else:
+            print(f"| >>> DECISION: NORMAL (score {my_score:.4f} <= threshold {threshold:.4f})" if threshold else "| >>> DECISION: NORMAL (not enough data)")
+        print("-" * 65)
 
     def detect(self, observations: np.ndarray) -> Tuple[bool, float]:
         """
@@ -351,6 +478,17 @@ class OD_Detector:
                 
                 if self._cached_threshold and my_score > self._cached_threshold:
                     is_outlier = True
+        
+        # Log query if verbose
+        self._log_query(
+            observations=observations,
+            assigned_cluster=assigned_cluster_idx,
+            min_dist=min_dist if 'min_dist' in dir() else 0,
+            my_score=metric_val,
+            threshold=self._cached_threshold,
+            is_outlier=is_outlier,
+            n_clusters=n_clusters
+        )
         
         if is_outlier:
             self.detected_count += 1

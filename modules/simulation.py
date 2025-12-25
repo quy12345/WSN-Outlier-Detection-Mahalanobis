@@ -12,7 +12,8 @@ from .config import N_CLUSTERS, N_ATTRIBUTES, SENSOR_ATTRIBUTES
 
 def run_cluster_simulation(cluster_id: int, cluster_data: pd.DataFrame, 
                            ground_truth: np.ndarray, algorithm: str = 'ODA-MD',
-                           window_size: int = 50) -> dict:
+                           window_size: int = 50, verbose: bool = False,
+                           sample_log_interval: int = 500) -> dict:
     """
     Run simulation for a single cluster with TIME-STEP processing.
     
@@ -31,6 +32,10 @@ def run_cluster_simulation(cluster_id: int, cluster_data: pd.DataFrame,
         'ODA-MD' or 'OD'
     window_size : int
         Window size for rolling statistics (ODA-MD)
+    verbose : bool
+        Whether to print detailed CH queries
+    sample_log_interval : int
+        How often to print query details (every N time steps)
     
     Returns:
     --------
@@ -74,9 +79,10 @@ def run_cluster_simulation(cluster_id: int, cluster_data: pd.DataFrame,
             member = SensorNode(node_id, node_data_matrices[node_id])
             members.append(member)
         detector = ClusterHead(cluster_id=cluster_id, node_ids=node_ids,
-                               member_nodes=members, window_size=window_size)
+                               member_nodes=members, window_size=window_size,
+                               verbose=verbose, sample_log_interval=sample_log_interval)
     else:
-        detector = OD_Detector(n_nodes=len(node_ids))
+        detector = OD_Detector(n_nodes=len(node_ids), verbose=verbose)
     
     decisions = {}
     da_history = []
